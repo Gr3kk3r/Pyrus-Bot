@@ -75,6 +75,10 @@ function verifySignature(rawBody, signature, secret) {
     }
 }
 
+console.log('🔥🔥🔥 REQUEST RECEIVED FROM PYRUS');
+console.log('Task ID:', req.body.task?.id);
+console.log('Headers:', JSON.stringify(req.headers));
+
 // ============================================
 // ПАРСИНГ ФИО С ВАЛИДАЦИЕЙ
 // ============================================
