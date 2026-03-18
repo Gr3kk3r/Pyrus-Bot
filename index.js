@@ -25,25 +25,42 @@ app.use(express.json({
 }));
 
 // ============================================
-// КОНФИГУРАЦИЯ
+// КОНФИГУРАЦИЯ - ВЫНЕСЕНА В ENVIRONMENT
 // ============================================
 const config = {
-    secretKey: process.env.PYRUS_BOT_SECRET,
-    targetFormId: process.env.TARGET_FORM_ID || 91, // Важно: 91, а не 84!
+    // Секретный ключ бота из Pyrus - теперь ищем в BOT_SECRET_KEY
+    secretKey: process.env.BOT_SECRET_KEY || process.env.PYRUS_BOT_SECRET,
+    
+    // ID формы с сотрудниками (форма 91)
+    targetFormId: process.env.BOT_TARGET_FORM_ID || process.env.TARGET_FORM_ID || 91,
+    
+    // Названия полей
     fieldNames: {
-        sourceField: process.env.SOURCE_FIELD || 'personText',
-        targetField: process.env.TARGET_FIELD || 'personForm',
+        sourceField: process.env.BOT_SOURCE_FIELD || process.env.SOURCE_FIELD || 'personText',
+        targetField: process.env.BOT_TARGET_FIELD || process.env.TARGET_FIELD || 'personForm',
         lastName: process.env.LAST_NAME_FIELD || 'Фамилия',
         firstName: process.env.FIRST_NAME_FIELD || 'Имя',
         middleName: process.env.MIDDLE_NAME_FIELD || 'Отчество'
     },
+    
+    // Настройки безопасности
     security: {
-        maxNameParts: 5,
-        minNameParts: 3,
-        tokenExpiryBuffer: 60,
-        maxRetries: 3
+        maxNameParts: 5,           // Максимальное количество частей ФИО
+        minNameParts: 3,            // Минимальное количество частей ФИО
+        tokenExpiryBuffer: 60,       // Запас времени токена (секунд)
+        maxRetries: 3                // Количество повторных попыток
     }
 };
+
+// ============================================
+// ОТЛАДКА: что видит бот
+// ============================================
+console.log('🔍 DEBUG: Environment variables:');
+console.log('- BOT_SECRET_KEY exists?', process.env.BOT_SECRET_KEY ? '✅' : '❌');
+console.log('- BOT_TARGET_FORM_ID:', process.env.BOT_TARGET_FORM_ID);
+console.log('- BOT_SOURCE_FIELD:', process.env.BOT_SOURCE_FIELD);
+console.log('- BOT_TARGET_FIELD:', process.env.BOT_TARGET_FIELD);
+console.log('- NPM_CONFIG_OMIT:', process.env.NPM_CONFIG_OMIT);
 
 // ============================================
 // ВАЛИДАЦИЯ
