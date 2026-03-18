@@ -75,10 +75,6 @@ function verifySignature(rawBody, signature, secret) {
     }
 }
 
-console.log('🔥🔥🔥 REQUEST RECEIVED FROM PYRUS');
-console.log('Task ID:', req.body.task?.id);
-console.log('Headers:', JSON.stringify(req.headers));
-
 // ============================================
 // ПАРСИНГ ФИО С ВАЛИДАЦИЕЙ
 // ============================================
@@ -246,6 +242,9 @@ app.post('/webhook', async (req, res) => {
     console.log(`\n=== [${requestId}] NEW REQUEST ===`);
     console.log(`Time: ${new Date().toISOString()}`);
     console.log(`Headers:`, JSON.stringify(req.headers));
+    console.log('🔥🔥🔥 REQUEST RECEIVED FROM PYRUS');
+    console.log('Task ID:', req.body.task?.id);
+    console.log('Headers:', JSON.stringify(req.headers));
 
     try {
         // 1. ПРОВЕРКА ПОДПИСИ (обязательно)
