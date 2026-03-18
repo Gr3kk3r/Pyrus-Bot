@@ -2,25 +2,34 @@ const express = require('express');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 
+// ============================================
+// ГЛОБАЛЬНЫЕ ОБРАБОТЧИКИ ОШИБОК
+// ============================================
+process.on('uncaughtException', (error) => {
+    console.error('💥 UNCAUGHT EXCEPTION:', error);
+    console.error('Stack:', error.stack);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 UNHANDLED REJECTION:', reason);
+    console.error('Promise:', promise);
+    process.exit(1);
+});
+
 const app = express();
 app.use(express.json({
     verify: (req, res, buf) => {
-        // Сохраняем raw body для проверки подписи
         req.rawBody = buf.toString();
     }
 }));
 
 // ============================================
-// КОНФИГУРАЦИЯ - ВЫНЕСЕНА В ENVIRONMENT
+// КОНФИГУРАЦИЯ
 // ============================================
 const config = {
-    // Секретный ключ бота из Pyrus
     secretKey: process.env.PYRUS_BOT_SECRET,
-    
-    // ID формы с сотрудниками
-    targetFormId: process.env.TARGET_FORM_ID || 84,
-    
-    // Названия полей (можно переопределить через env)
+    targetFormId: process.env.TARGET_FORM_ID || 91, // Важно: 91, а не 84!
     fieldNames: {
         sourceField: process.env.SOURCE_FIELD || 'personText',
         targetField: process.env.TARGET_FIELD || 'personForm',
@@ -28,18 +37,16 @@ const config = {
         firstName: process.env.FIRST_NAME_FIELD || 'Имя',
         middleName: process.env.MIDDLE_NAME_FIELD || 'Отчество'
     },
-    
-    // Настройки безопасности
     security: {
-        maxNameParts: 5,           // Максимальное количество частей ФИО
-        minNameParts: 3,            // Минимальное количество частей ФИО
-        tokenExpiryBuffer: 60,       // Запас времени токена (секунд)
-        maxRetries: 3                // Количество повторных попыток
+        maxNameParts: 5,
+        minNameParts: 3,
+        tokenExpiryBuffer: 60,
+        maxRetries: 3
     }
 };
 
 // ============================================
-// ВАЛИДАЦИЯ КОНФИГУРАЦИИ
+// ВАЛИДАЦИЯ
 // ============================================
 if (!config.secretKey) {
     console.error('❌ CRITICAL: PYRUS_BOT_SECRET not set');
@@ -47,7 +54,7 @@ if (!config.secretKey) {
 }
 
 // ============================================
-// ПРОВЕРКА ПОДПИСИ PYRUS
+// ПРОВЕРКА ПОДПИСИ
 // ============================================
 function verifySignature(rawBody, signature, secret) {
     if (!signature || !rawBody) {
@@ -60,7 +67,6 @@ function verifySignature(rawBody, signature, secret) {
         hmac.update(rawBody);
         const digest = hmac.digest('hex').toLowerCase();
         
-        // Используем timingSafeEqual для предотвращения timing attacks
         const signatureBuffer = Buffer.from(signature.toLowerCase());
         const digestBuffer = Buffer.from(digest);
         
@@ -76,7 +82,7 @@ function verifySignature(rawBody, signature, secret) {
 }
 
 // ============================================
-// ПАРСИНГ ФИО С ВАЛИДАЦИЕЙ
+// ПАРСИНГ ФИО
 // ============================================
 function parseFullName(fullName) {
     if (!fullName || typeof fullName !== 'string') {
@@ -113,7 +119,7 @@ function parseFullName(fullName) {
 }
 
 // ============================================
-// ПОИСК СОТРУДНИКА С RETRY LOGIC
+// ПОИСК СОТРУДНИКА
 // ============================================
 async function findEmployee(nameData, accessToken, retryCount = 0) {
     try {
@@ -139,7 +145,6 @@ async function findEmployee(nameData, accessToken, retryCount = 0) {
                 throw new Error('Unauthorized - check bot permissions');
             }
             if (response.status === 429 && retryCount < config.security.maxRetries) {
-                // Rate limiting - exponential backoff
                 const waitTime = Math.pow(2, retryCount) * 1000;
                 console.log(`⏳ Rate limited, retrying in ${waitTime}ms...`);
                 await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -173,11 +178,10 @@ async function findEmployee(nameData, accessToken, retryCount = 0) {
 }
 
 // ============================================
-// ОБНОВЛЕНИЕ ПОЛЯ И ЗАВЕРШЕНИЕ ЭТАПА
+// ОБНОВЛЕНИЕ ПОЛЯ
 // ============================================
 async function updateTaskField(taskId, employeeId, accessToken) {
     try {
-        // 1. Обновляем поле personForm
         const commentResponse = await fetch(`https://api.pyrus.com/v4/tasks/${taskId}/comments`, {
             method: 'POST',
             headers: {
@@ -201,7 +205,6 @@ async function updateTaskField(taskId, employeeId, accessToken) {
 
         console.log(`✅ Field ${config.fieldNames.targetField} updated with task ${employeeId}`);
 
-        // 2. Завершаем текущий этап (переводим задачу дальше по маршруту)
         const stepResponse = await fetch(`https://api.pyrus.com/v4/tasks/${taskId}/steps/complete`, {
             method: 'POST',
             headers: {
@@ -211,7 +214,6 @@ async function updateTaskField(taskId, employeeId, accessToken) {
         });
 
         if (!stepResponse.ok) {
-            // Не критично, если этап не завершился - поле уже обновлено
             console.warn(`⚠️ Failed to complete step: ${stepResponse.status}`);
             return {
                 success: true,
@@ -232,22 +234,17 @@ async function updateTaskField(taskId, employeeId, accessToken) {
 }
 
 // ============================================
-// ОСНОВНОЙ ОБРАБОТЧИК WEBHOOK
+// WEBHOOK ОБРАБОТЧИК
 // ============================================
 app.post('/webhook', async (req, res) => {
     const startTime = Date.now();
     const requestId = crypto.randomBytes(4).toString('hex');
 
-    // Структурированное логирование
     console.log(`\n=== [${requestId}] NEW REQUEST ===`);
     console.log(`Time: ${new Date().toISOString()}`);
-    console.log(`Headers:`, JSON.stringify(req.headers));
-    console.log('🔥🔥🔥 REQUEST RECEIVED FROM PYRUS');
     console.log('Task ID:', req.body.task?.id);
-    console.log('Headers:', JSON.stringify(req.headers));
 
     try {
-        // 1. ПРОВЕРКА ПОДПИСИ (обязательно)
         const signature = req.headers['x-pyrus-sig'];
         if (!verifySignature(req.rawBody, signature, config.secretKey)) {
             console.error(`❌ [${requestId}] Invalid signature`);
@@ -258,7 +255,6 @@ app.post('/webhook', async (req, res) => {
         }
         console.log(`✅ [${requestId}] Signature verified`);
 
-        // 2. ВАЛИДАЦИЯ ВХОДЯЩИХ ДАННЫХ
         const { task, access_token } = req.body;
         
         if (!task || !task.id) {
@@ -271,16 +267,14 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`📋 [${requestId}] Task ID: ${task.id}`);
 
-        // 3. ПОИСК ПОЛЯ personText
         const personField = task.fields?.find(f => 
             f.name === config.fieldNames.sourceField || 
             f.code === config.fieldNames.sourceField
         );
 
         if (!personField?.value) {
-            console.log(`ℹ️ [${requestId}] Source field empty, completing step without changes`);
+            console.log(`ℹ️ [${requestId}] Source field empty`);
             
-            // Завершаем этап даже без изменений (чтобы задача не зависла)
             await fetch(`https://api.pyrus.com/v4/tasks/${task.id}/steps/complete`, {
                 method: 'POST',
                 headers: {
@@ -295,12 +289,10 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // 4. ПАРСИНГ ФИО
         const nameData = parseFullName(personField.value);
         if (!nameData.success) {
             console.log(`⚠️ [${requestId}] Name parsing failed: ${nameData.error}`);
             
-            // Завершаем этап с комментарием об ошибке
             await fetch(`https://api.pyrus.com/v4/tasks/${task.id}/comments`, {
                 method: 'POST',
                 headers: {
@@ -326,7 +318,6 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // 5. ПОИСК СОТРУДНИКА
         const searchResult = await findEmployee(nameData, access_token);
 
         if (!searchResult.success) {
@@ -357,7 +348,6 @@ app.post('/webhook', async (req, res) => {
             });
         }
 
-        // 6. АНАЛИЗ РЕЗУЛЬТАТОВ ПОИСКА
         if (searchResult.count === 0) {
             console.log(`ℹ️ [${requestId}] No employees found`);
             
@@ -413,18 +403,15 @@ app.post('/webhook', async (req, res) => {
             
             return res.json({ 
                 text: `Найдено несколько сотрудников (${searchResult.count})`,
-                code: 'MULTIPLE_FOUND',
-                tasks: searchResult.tasks.map(t => t.id)
+                code: 'MULTIPLE_FOUND'
             });
         }
 
-        // 7. НАЙДЕН РОВНО ОДИН СОТРУДНИК
         const employee = searchResult.tasks[0];
         console.log(`✅ [${requestId}] Found exactly one employee: ${employee.id}`);
 
         const updateResult = await updateTaskField(task.id, employee.id, access_token);
 
-        // 8. ВОЗВРАЩАЕМ РЕЗУЛЬТАТ
         const processingTime = Date.now() - startTime;
         console.log(`✅ [${requestId}] Successfully processed in ${processingTime}ms`);
 
@@ -432,14 +419,13 @@ app.post('/webhook', async (req, res) => {
             text: `✅ Найден сотрудник: задача №${employee.id}`,
             code: 'SUCCESS',
             employeeId: employee.id,
-            processingTime,
-            stepCompleted: updateResult.success
+            processingTime
         });
 
     } catch (error) {
         console.error(`❌ [${requestId}] Unhandled error:`, error);
+        console.error('Stack:', error.stack);
         
-        // Даже при ошибке пытаемся завершить этап, чтобы задача не зависла
         try {
             const { task, access_token } = req.body;
             if (task?.id && access_token) {
@@ -464,7 +450,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ============================================
-// HEALTH CHECK ДЛЯ RAILWAY
+// HEALTH CHECKS
 // ============================================
 app.get('/health', (req, res) => {
     res.json({ 
@@ -474,9 +460,6 @@ app.get('/health', (req, res) => {
     });
 });
 
-// ============================================
-// КОРНЕВОЙ МАРШРУТ ДЛЯ HEALTH CHECK RAILWAY
-// ============================================
 app.get('/', (req, res) => {
     res.json({ 
         status: 'ok',
@@ -490,7 +473,7 @@ app.get('/', (req, res) => {
 // ЗАПУСК СЕРВЕРА
 // ============================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log('\n=================================');
     console.log('🚀 ENTERPRISE BOT STARTED');
     console.log('=================================');
@@ -507,10 +490,16 @@ app.listen(PORT, () => {
 // ============================================
 process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully');
-    process.exit(0);
+    server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+    });
 });
 
 process.on('SIGINT', () => {
     console.log('SIGINT received, shutting down gracefully');
-    process.exit(0);
+    server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+    });
 });
